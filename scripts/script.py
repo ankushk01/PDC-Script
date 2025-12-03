@@ -3,6 +3,25 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+import psycopg2
+from psycopg2 import sql
+
+# Connect to PostgreSQL database
+def connect_to_db():
+    """Connect to localhost PostgreSQL database 'pdc'"""
+    try:
+        conn = psycopg2.connect(
+            host="44.215.157.55",
+            database="pdc",
+            user="ankush",
+            password="postgres",
+            port=8000
+        )
+        print("✅ Connected to PostgreSQL database 'pdc'")
+        return conn
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(f"❌ Error connecting to database: {error}")
+        return None
 
 # Helper function to recursively remove @ from all keys
 def remove_at_prefix(obj):
@@ -106,6 +125,33 @@ def map_eb_codes(eb_entry, lookup_cache):
     # Finally, remove @ prefix from all remaining keys
     return remove_at_prefix(mapped_entry)
 
+# Insert data into database
+def insert_into_db(conn, member_id, data_records):
+    """Insert processed EB records into eb_blocks table"""
+    if not conn or not data_records:
+        return 0
+    
+    try:
+        cursor = conn.cursor()
+        inserted_count = 0
+        
+        for record in data_records:
+            insert_query = sql.SQL(
+                "INSERT INTO eb_blocks (member_id, data) VALUES (%s, %s)"
+            )
+            cursor.execute(insert_query, (member_id, json.dumps(record["data"])))
+            inserted_count += 1
+        
+        conn.commit()
+        cursor.close()
+        return inserted_count
+    
+    except Exception as e:
+        print(f"❌ Error inserting into database: {str(e)}")
+        if conn:
+            conn.rollback()
+        return 0
+
 # Process a single JSON file
 def process_json_file(file_path, lookup_cache):
     """Process a single JSON file and extract EB data"""
@@ -155,6 +201,13 @@ def process_json_file(file_path, lookup_cache):
 def main():
     """Main function to process all JSON files in data folder"""
     
+    # Check database connection
+    print("Checking database connection...")
+    conn = connect_to_db()
+    if not conn:
+        print("❌ Failed to connect to database. Exiting.")
+        return
+    
     # Load mapping once and build lookup cache
     print("Loading and building mapping cache...")
     lookup_cache = load_mapping()
@@ -171,6 +224,8 @@ def main():
     
     print(f"Found {len(json_files)} JSON files to process\n")
     
+    total_db_records = 0
+    
     # Process each file
     for json_file in json_files:
         file_path = os.path.join(data_folder, json_file)
@@ -180,6 +235,11 @@ def main():
         results = process_json_file(file_path, lookup_cache)
         
         if results:
+            # Insert into database
+            member_id = results[0].get("member_id")
+            db_inserted = insert_into_db(conn, member_id, results)
+            total_db_records += db_inserted
+            
             # Create output filename
             output_filename = f"{json_file.replace('.json', '')}_processed.json"
             output_path = os.path.join(output_folder, output_filename)
@@ -188,9 +248,13 @@ def main():
             with open(output_path, "w") as f:
                 json.dump(results, f, indent=2)
             
-            print(f"✅ Saved: {output_filename} ({len(results)} EB records)\n")
+            print(f"✅ Saved: {output_filename} ({len(results)} EB records)")
+            print(f"✅ Inserted into DB: {db_inserted} records\n")
         else:
             print(f"⚠️ No data extracted from {json_file}\n")
+    
+    print(f"📊 Processing complete! Total DB records inserted: {total_db_records}")
+    conn.close()
 
 if __name__ == "__main__":
     # Check if a specific file was provided as argument
@@ -210,6 +274,13 @@ if __name__ == "__main__":
             print(f"   Expected path: {file_path}")
             sys.exit(1)
         
+        # Connect to database
+        print("Checking database connection...")
+        conn = connect_to_db()
+        if not conn:
+            print("❌ Failed to connect to database. Exiting.")
+            sys.exit(1)
+        
         # Load mapping and process single file
         print(f"Loading and building mapping cache...")
         lookup_cache = load_mapping()
@@ -218,6 +289,10 @@ if __name__ == "__main__":
         results = process_json_file(file_path, lookup_cache)
         
         if results:
+            # Insert into database
+            member_id = results[0].get("member_id")
+            db_inserted = insert_into_db(conn, member_id, results)
+            
             # Create output filename
             output_filename = f"{specific_file.replace('.json', '')}.json"
             output_path = os.path.join(output_folder, output_filename)
@@ -228,9 +303,12 @@ if __name__ == "__main__":
             
             print(f"✅ Successfully processed: {specific_file}")
             print(f"✅ Output saved to: {output_filename}")
-            print(f"   Records: {len(results)} EB entries")
+            print(f"   EB records: {len(results)}")
+            print(f"   DB records inserted: {db_inserted}")
         else:
             print(f"⚠️ No data extracted from {specific_file}")
+        
+        conn.close()
     else:
         # Process all files if no argument provided
         main()
