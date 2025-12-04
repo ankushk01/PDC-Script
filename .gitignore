@@ -2,3 +2,5 @@ data
 output_data
 *.xls
 *.xlsx
+logs/*
+.env

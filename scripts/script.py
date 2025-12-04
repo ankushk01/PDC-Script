@@ -5,17 +5,53 @@ from datetime import datetime
 from pathlib import Path
 import psycopg2
 from psycopg2 import sql
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Setup logging file
+LOG_FILE = None
+
+def setup_log_file():
+    """Setup pipeline_timestamp log file in logs folder with timestamp"""
+    global LOG_FILE
+    logs_folder = "../logs"
+    os.makedirs(logs_folder, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+    LOG_FILE = os.path.join(logs_folder, f"pipeline_{timestamp}.log")
+    return LOG_FILE
+
+def log_message(message):
+    """Append message to pipeline_timestamp log file"""
+    global LOG_FILE
+    if LOG_FILE:
+        try:
+            with open(LOG_FILE, "a") as f:
+                f.write(message + "\n")
+        except Exception as e:
+            print(f"❌ Error writing to log file: {e}")
+
+def log_line_break():
+    """Add a line break to the log file"""
+    global LOG_FILE
+    if LOG_FILE:
+        try:
+            with open(LOG_FILE, "a") as f:
+                f.write("\n")
+        except Exception as e:
+            print(f"❌ Error writing to log file: {e}")
 
 # Connect to PostgreSQL database
 def connect_to_db():
-    """Connect to localhost PostgreSQL database 'pdc'"""
+    """Connect to PostgreSQL database using environment variables"""
     try:
         conn = psycopg2.connect(
-            host="44.215.157.55",
-            database="pdc",
-            user="ankush",
-            password="postgres",
-            port=8000
+            host=os.getenv("DB_HOST", "localhost"),
+            database=os.getenv("DB_NAME", "pdc"),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", "postgres"),
+            port=int(os.getenv("DB_PORT", 5432))
         )
         print("✅ Connected to PostgreSQL database 'pdc'")
         return conn
@@ -96,8 +132,8 @@ def map_eb_codes(eb_entry, lookup_cache):
             
             # Check if this EB field has mappings
             if eb_field not in lookup_cache:
-                # No mapping available, set to null
-                mapped_entry[clean_key] = None
+                # No mapping available, keep original value
+                mapped_entry[clean_key] = value
                 continue
             
             field_mapping = lookup_cache[eb_field]
@@ -107,17 +143,15 @@ def map_eb_codes(eb_entry, lookup_cache):
             if "^" in value_str:
                 codes = value_str.split("^")
                 # Use list comprehension for better performance
-                # Set to None if code is not found in mapping
+                # Keep original code if not found in mapping
                 mapped_values = [
-                    field_mapping.get(code.strip(), None) 
+                    field_mapping.get(code.strip(), code.strip()) 
                     for code in codes
                 ]
-                # Filter out None values and join
-                mapped_values = [v for v in mapped_values if v is not None]
-                mapped_entry[clean_key] = ", ".join(mapped_values) if mapped_values else None
+                mapped_entry[clean_key] = ", ".join(mapped_values)
             else:
-                # Single code value - direct lookup, None if not found
-                mapped_entry[clean_key] = field_mapping.get(value_str, None)
+                # Single code value - direct lookup, keep original if not found
+                mapped_entry[clean_key] = field_mapping.get(value_str, value_str)
         else:
             # Keep other fields as-is, but remove @ from all nested keys
             mapped_entry[key] = remove_at_prefix(value)
@@ -201,6 +235,9 @@ def process_json_file(file_path, lookup_cache):
 def main():
     """Main function to process all JSON files in data folder"""
     
+    # Setup logging
+    setup_log_file()
+    
     # Check database connection
     print("Checking database connection...")
     conn = connect_to_db()
@@ -230,6 +267,7 @@ def main():
     for json_file in json_files:
         file_path = os.path.join(data_folder, json_file)
         print(f"Processing: {json_file}")
+        log_message(f"Processing: {json_file}")
         
         # Extract member ID from filename for reference
         results = process_json_file(file_path, lookup_cache)
@@ -248,8 +286,14 @@ def main():
             with open(output_path, "w") as f:
                 json.dump(results, f, indent=2)
             
-            print(f"✅ Saved: {output_filename} ({len(results)} EB records)")
-            print(f"✅ Inserted into DB: {db_inserted} records\n")
+            log_msg_1 = f"✅ Saved: {output_filename} ({len(results)} EB records)"
+            log_msg_2 = f"✅ Inserted into DB: {db_inserted} records"
+            
+            print(log_msg_1)
+            print(log_msg_2)
+            log_message(log_msg_1)
+            log_message(log_msg_2)
+            log_line_break()
         else:
             print(f"⚠️ No data extracted from {json_file}\n")
     
@@ -259,6 +303,9 @@ def main():
 if __name__ == "__main__":
     # Check if a specific file was provided as argument
     if len(sys.argv) > 1:
+        # Setup logging
+        setup_log_file()
+        
         # Process single file
         specific_file = sys.argv[1]
         data_folder = "../data"
@@ -286,6 +333,8 @@ if __name__ == "__main__":
         lookup_cache = load_mapping()
         
         print(f"\nProcessing single file: {specific_file}")
+        log_message(f"Processing: {specific_file}")
+        
         results = process_json_file(file_path, lookup_cache)
         
         if results:
@@ -301,10 +350,15 @@ if __name__ == "__main__":
             with open(output_path, "w") as f:
                 json.dump(results, f, indent=2)
             
+            log_msg_1 = f"✅ Saved: {output_filename} ({len(results)} EB records)"
+            log_msg_2 = f"✅ Inserted into DB: {db_inserted} records"
+            
             print(f"✅ Successfully processed: {specific_file}")
-            print(f"✅ Output saved to: {output_filename}")
-            print(f"   EB records: {len(results)}")
-            print(f"   DB records inserted: {db_inserted}")
+            print(log_msg_1)
+            print(log_msg_2)
+            log_message(log_msg_1)
+            log_message(log_msg_2)
+            log_line_break()
         else:
             print(f"⚠️ No data extracted from {specific_file}")
         
