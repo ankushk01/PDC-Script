@@ -18,7 +18,7 @@ def setup_log_file():
     global LOG_FILE
     logs_folder = "../logs"
     os.makedirs(logs_folder, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
     LOG_FILE = os.path.join(logs_folder, f"pipeline_{timestamp}.log")
     return LOG_FILE
 
